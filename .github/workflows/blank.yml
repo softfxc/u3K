@@ -2,7 +2,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -25,16 +26,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7
+          gradle-version: '8.7'
 
       - name: Extract u3k.zip from repository root
         shell: bash
         run: |
+          set -e
+
           ZIP_FILE="u3k.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: No existe $ZIP_FILE en la raíz del repositorio"
-            echo "Contenido de la raíz:"
             ls -la
             exit 1
           fi
@@ -42,29 +44,13 @@ jobs:
           rm -rf extracted_u3k
           mkdir -p extracted_u3k
 
-          python3 - <<'PY'
-          import zipfile
-          import sys
-          from pathlib import Path
-
-          zip_path = Path("u3k.zip")
-          out_dir = Path("extracted_u3k")
-
-          if not zipfile.is_zipfile(zip_path):
-              print("ERROR: u3k.zip no es un ZIP válido")
-              sys.exit(1)
-
-          with zipfile.ZipFile(zip_path, "r") as z:
-              z.extractall(out_dir)
-
-          print("u3k.zip extraído correctamente")
-          PY
+          python3 -c "import zipfile,sys; p='u3k.zip'; sys.exit(0) if zipfile.is_zipfile(p) else sys.exit(11)"
+          python3 -m zipfile -e "$ZIP_FILE" extracted_u3k
 
           PROJECT_DIR="$(find extracted_u3k -maxdepth 6 -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -printf '%h\n' | head -n 1)"
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: No se encontró settings.gradle/settings.gradle.kts dentro de u3k.zip"
-            echo "Contenido extraído:"
             find extracted_u3k -maxdepth 6 -type f | sort | head -200
             exit 1
           fi
@@ -75,14 +61,13 @@ jobs:
       - name: Build debug APK from u3k.zip
         shell: bash
         run: |
+          set -e
           cd "$PROJECT_DIR"
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
           else
-            echo "No existe gradlew dentro del proyecto Android."
-            echo "Compilando con Gradle instalado por GitHub Actions..."
             gradle assembleDebug --stacktrace
           fi
 
@@ -92,4 +77,3 @@ jobs:
           name: u3k-debug-apk
           path: extracted_u3k/**/build/outputs/apk/**/*.apk
           if-no-files-found: error
-``` [❶](code://python)
