@@ -1,0 +1,114 @@
+name: Build Android APK
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract u3k.zip from repository root
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="u3k.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: No existe $ZIP_FILE en la raíz del repositorio"
+            echo "Archivos en la raíz:"
+            ls -la
+            exit 1
+          fi
+
+          rm -rf extracted_u3k
+          mkdir -p extracted_u3k
+
+          python3 -c "import zipfile,sys; p='u3k.zip'; sys.exit(0 if zipfile.is_zipfile(p) else 11)"
+          python3 -m zipfile -e "$ZIP_FILE" extracted_u3k
+
+          PROJECT_DIR="$(find extracted_u3k -maxdepth 6 -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -printf '%h\n' | head -n 1)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: No se encontró settings.gradle/settings.gradle.kts dentro de u3k.zip"
+            echo "Contenido extraído:"
+            find extracted_u3k -maxdepth 6 -type f | sort | head -200
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyecto Android detectado en: $PROJECT_DIR"
+
+      - name: Build debug APK from u3k.zip
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          cd "$PROJECT_DIR"
+
+          echo "Java activo:"
+          java -version
+
+          echo "Gradle activo:"
+          gradle --version
+
+          GRADLE_VERSION="$(gradle --version | awk '/Gradle / { print $2; exit }')"
+          if [ "$GRADLE_VERSION" != "8.9" ]; then
+            echo "ERROR: Este workflow debe usar Gradle 8.9, pero está usando Gradle $GRADLE_VERSION"
+            exit 1
+          fi
+
+          set +e
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon --warning-mode all 2>&1 | tee ../../build.log
+            STATUS=${PIPESTATUS[0]}
+          else
+            gradle assembleDebug --no-daemon --warning-mode all 2>&1 | tee ../../build.log
+            STATUS=${PIPESTATUS[0]}
+          fi
+          set -e
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo ""
+            echo "===== ERROR REAL DE GRADLE/KOTLIN/ANDROID ====="
+            grep -n -E "FAILURE:|What went wrong|Execution failed|Could not|error:|ERROR:|e: |Exception" ../../build.log | head -120 || true
+            echo "===== FIN DEL RESUMEN ====="
+            exit "$STATUS"
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u3k-build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: u3k-debug-apk
+          path: extracted_u3k/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
