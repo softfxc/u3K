@@ -1,0 +1,56 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Extract u3K.zip from repository root
+        run: |
+          test -f u3K.zip || { echo "ERROR: No existe u3K.zip en la raíz del repositorio"; exit 1; }
+          rm -rf extracted_u3k
+          mkdir extracted_u3k
+          unzip -q u3K.zip -d extracted_u3k
+
+          PROJECT_DIR="$(find extracted_u3k -maxdepth 4 -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -printf '%h\n' | head -n 1)"
+          test -n "$PROJECT_DIR" || { echo "ERROR: No se encontró settings.gradle/settings.gradle.kts dentro de u3K.zip"; exit 1; }
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyecto Android detectado en: $PROJECT_DIR"
+
+      - name: Build debug APK from u3K.zip
+        run: |
+          cd "$PROJECT_DIR"
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: u3K-debug-apk
+          path: extracted_u3k/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
